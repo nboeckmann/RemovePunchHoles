@@ -34,6 +34,7 @@ printUsage(){
 	echo "#	 -bb,   --bottomBorder"
 	echo "#	 -msis, --minSearchImageSize"
 	echo "#	 -v,    --verbose"
+	echo "#  -d,    --debug"
 	echo "#	 -h,    --help"
 	echo "#"
 	echo "# EXAMPLES"
@@ -61,6 +62,7 @@ printUsage(){
 	minSearchImagePx="3"
 
 	verbose=0
+	debug=0
 	printUsage=0
 #end of default config values
 #--------------------------------------
@@ -130,9 +132,17 @@ do
 		-h|--help)
 			printUsage
 			;;
+		-d|--debug)
+			verbose=0
+			debug=1
+			;;
 	esac
 	shift
 done
+
+if [ "$verbose" -eq 1 ] && [ "$debug" -eq 1 ] ; then
+	verbose=0
+fi
 
 if [ -z "$inputFilePath" ]
 then
@@ -147,16 +157,18 @@ then
 fi
 
 UUID=$(cat /proc/sys/kernel/random/uuid)
-tmpDir="/scripts/ocrTmp/$UUID"
+tmpDir="/tmp/ocrTmp/$UUID"
 mkdir -p "$tmpDir"
 
-echo "Extracting pages of inputFile"
+if [ "$verbose" -eq 1 ] || [ "$debug" -eq 1 ] ; then
+	echo "Extracting pages of inputFile"
+fi
 
 /usr/bin/convert -type Palette "$inputFilePath" "$tmpDir/%d.tif"
 
 files="$tmpDir/*.tif"
 
-if [ "$verbose" -eq 0 ]; then
+if [ "$verbose" -eq 1 ]; then
 	echo -n "Working on page "
 fi
 
@@ -208,12 +220,14 @@ do
 		percent=($(bc <<< "$percent + 1"))
 	done
 
-	if [ "$verbose" -eq 1 ]
-	then
+	if [ "$debug" -eq 1 ] ; then
 		echo "Working on page $(expr $fileNameClean + 1) percent=$percent percentFactor=$percentFactor percentFactorMult=$percentFactorMult x=$x y=$y xRes=$xRes yRes=$yRes xDim=$xDim yDim=$yDim xLeftBorderPx=$xLeftBorderPx yTopBorderPx=$yTopBorderPx xRightBorderPx=$xRightBorderPx yBottomBorderPx=$yBottomBorderPx"
-	else
+	fi
+	
+	if [ "$verbose" -eq 1 ] ; then
 		echo -n "$(expr $fileNameClean + 1)"
 	fi
+
 	/usr/bin/convert -type Bilevel -type Grayscale -depth 1 -size "($(bc <<< "$xDimSmall"))"x"($(bc <<< "$yDimSmall"))" xc: -fill black -draw "translate $xDimSmallHalf,$yDimSmallHalf circle 0,0 $xDimSmallHalf,0" "$fileNameCircle"
 	
 	/usr/bin/convert -type Palette -resize "$percent"% "$f" "$tmpDir/$fileNameSmall"
@@ -244,19 +258,19 @@ do
 			
 			if [ $leftBorderMatch -eq 1 ] || [ $topBorderMatch -eq 1 ] || [ $rightBorderMatch -eq 1 ] || [ $bottomBorderMatch -eq 1 ]
 			then
-				if [ "$verbose" -eq 1 ]
+				if [ "$debug" -eq 1 ]
 				then
 					echo -e "\t Match found: findX=$findX findY=$findY xBig=$xBig yBig=$yBig borderMatches=$leftBorderMatch,$topBorderMatch,$rightBorderMatch,$bottomBorderMatch"
 				fi
 				/usr/bin/mogrify -type Palette -draw "fill $replaceColor translate "$xBig,$yBig" circle 0,0 $fillRadius,0" "$f"
 			else
-				if [ "$verbose" -eq 1 ]
+				if [ "$debug" -eq 1 ]
 				then
 					echo -e "\t Match found (filtered): findX=$findX findY=$findY xBig=$xBig yBig=$yBig borderMatches=$leftBorderMatch,$topBorderMatch,$rightBorderMatch,$bottomBorderMatch"
 				fi
 			fi
 
-			if [ "$verbose" -eq 0 ] ; then
+			if [ "$verbose" -eq 1 ] ; then
 				echo -n "."
 			fi
 		else
@@ -274,4 +288,7 @@ fi
 
 /usr/bin/convert -type Palette "$tmpDir/*.tif" "$outputFilePath"
 rm -rf "$tmpDir"
-echo "Done"
+
+if [ "$verbose" -eq 1 ] || [ "$debug" -eq 1 ] ; then
+	echo "Done"
+fi
