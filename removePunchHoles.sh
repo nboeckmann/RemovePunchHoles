@@ -43,6 +43,43 @@ printUsage(){
 	exit
 }
 
+removePunchHolesFromSlice(){
+	mogrifyString=""
+	
+	while : ; do
+		compareResult=`/usr/bin/compare -metric mse -similarity-threshold $similarityThreshold -dissimilarity-threshold $dissimilarityThreshold -subimage-search "$fileName" "$fileNameCircle" null: 2>&1`
+		foundCoordinates=($(echo "$compareResult" | grep -o "@.*" | grep -o "[0-9]*"))
+		if [ ${#foundCoordinates[@]} -eq 2 ]
+		then
+			findX=("${foundCoordinates[0]}")
+			findY=("${foundCoordinates[1]}")
+
+			findXSmall=($(printf %.2f $(echo "($findX + $xDimSmallHalf + ($xCorrection * $percentFactor))" | bc)))
+			findYSmall=($(printf %.2f $(echo "($findY + $yDimSmallHalf + ($yCorrection * $percentFactor))" | bc)))
+
+			xBig=($(printf %.2f $(echo "($findX * $percentFactorMult) + $xDimHalf + $xCorrection" + "$xOffset" | bc)))
+			yBig=($(printf %.2f $(echo "($findY * $percentFactorMult) + $yDimHalf + $yCorrection" + "$yOffset" | bc)))
+
+			fillRadius=($(bc <<< "$xDimHalf * $fillFactor"))
+			
+			/usr/bin/mogrify -type Palette -draw "fill white translate "$findXSmall,$findYSmall" circle 0,0 "$xDimSmallHalf,0"" "$fileName"
+			
+			if [ "$debug" -eq 1 ]
+			then
+				echo -e "\t Match found: findX=$findX findY=$findY xBig=$xBig yBig=$yBig"
+			fi
+
+			echo "fill $replaceColor ellipse $xBig,$yBig $fillRadius,$fillRadius 0,360" >> "$mvgName"
+			
+			if [ "$verbose" -eq 1 ] ; then
+				echo -n "."
+			fi
+		else
+			break
+		fi
+	done	
+}
+
 #---------------------------------------
 #default config values
 	fillFactor="1.5"
@@ -178,6 +215,12 @@ do
 	fileNameClean=${fileName%%.*}
 	fileNameSmall="$fileNameClean-small.tif"
 	fileNameSlice="$fileNameClean-slice.tif"
+
+	fileNameSliceL="$fileNameClean-sliceL.tif"
+	fileNameSliceT="$fileNameClean-sliceT.tif"
+	fileNameSliceR="$fileNameClean-sliceR.tif"
+	fileNameSliceB="$fileNameClean-sliceB.tif"
+
 	fileNameCircle="$tmpDir/circleSmall.png"
 	tifInfo=`/usr/bin/identify -verbose "$f"`
 	dimensions=($(echo "$tifInfo" | grep "Geometry:" | awk {'print $2'} | grep -o "[0-9]*"))
@@ -192,7 +235,7 @@ do
 	#determining the optimal shrink factor to speed the process up as much as possible
 	percent="1"
 	while : ; do
-	        percentFactor=($(printf %.2f $(echo "$percent / 100" | bc -l)))
+	    percentFactor=($(printf %.2f $(echo "$percent / 100" | bc -l)))
 		percentFactorMult=($(printf %.2f $(echo "100 / $percent" | bc -l)))
 		xSmall=($(printf %.2f $(echo "$x * $percentFactor" | bc -l)))
 		ySmall=($(printf %.2f $(echo "$y * $percentFactor" | bc -l)))
@@ -231,54 +274,59 @@ do
 	/usr/bin/convert -type Bilevel -type Grayscale -depth 1 -size "($(bc <<< "$xDimSmall"))"x"($(bc <<< "$yDimSmall"))" xc: -fill black -draw "translate $xDimSmallHalf,$yDimSmallHalf circle 0,0 $xDimSmallHalf,0" "$fileNameCircle"
 	
 	/usr/bin/convert -type Palette -resize "$percent"% "$f" "$tmpDir/$fileNameSmall"
-	/usr/bin/convert -threshold 50% +repage -size "$xSmall"x"$ySmall" -depth 1 -extract "$xSmall"x"$ySmall+0+0" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSlice"
+	#/usr/bin/convert -threshold 50% +repage -size "$xSmall"x"$ySmall" -depth 1 -extract "$xSmall"x"$ySmall+0+0" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSlice"
 
-	while : ; do
-		compareResult=`/usr/bin/compare -metric mse -similarity-threshold $similarityThreshold -dissimilarity-threshold $dissimilarityThreshold -subimage-search "$tmpDir/$fileNameSlice" "$fileNameCircle" null: 2>&1`
-		foundCoordinates=($(echo "$compareResult" | grep -o "@.*" | grep -o "[0-9]*"))
-		if [ ${#foundCoordinates[@]} -eq 2 ]
-		then
-			findX=("${foundCoordinates[0]}")
-			findY=("${foundCoordinates[1]}")
+	xOffset="0"
+	yOffset="0"
+	fileName=""
+	mvgName="$tmpDir/punchHoles.mvg"
 
-			findXSmall=($(printf %.2f $(echo "($findX + $xDimSmallHalf + ($xCorrection * $percentFactor))" | bc)))
-			findYSmall=($(printf %.2f $(echo "($findY + $yDimSmallHalf + ($yCorrection * $percentFactor))" | bc)))
-
-			xBig=($(printf %.2f $(echo "($findX * $percentFactorMult) + $xDimHalf + $xCorrection" | bc)))
-			yBig=($(printf %.2f $(echo "($findY * $percentFactorMult) + $yDimHalf + $yCorrection" | bc)))
-
-			leftBorderMatch=($(bc <<< "$xBig <= $xLeftBorderPx"))
-			topBorderMatch=($(bc <<< "$yBig <= $yTopBorderPx"))
-			rightBorderMatch=($(bc <<< "$xBig >= $xRightBorderPx"))
-			bottomBorderMatch=($(bc <<< "$yBig >= $yBottomBorderPx"))
-
-			fillRadius=($(bc <<< "$xDimHalf * $fillFactor"))
-
-			/usr/bin/mogrify -type Palette -draw "fill white translate "$findXSmall,$findYSmall" circle 0,0 "$xDimSmallHalf,0"" "$tmpDir/$fileNameSlice"
-			
-			if [ $leftBorderMatch -eq 1 ] || [ $topBorderMatch -eq 1 ] || [ $rightBorderMatch -eq 1 ] || [ $bottomBorderMatch -eq 1 ]
-			then
-				if [ "$debug" -eq 1 ]
-				then
-					echo -e "\t Match found: findX=$findX findY=$findY xBig=$xBig yBig=$yBig borderMatches=$leftBorderMatch,$topBorderMatch,$rightBorderMatch,$bottomBorderMatch"
-				fi
-				/usr/bin/mogrify -type Palette -draw "fill $replaceColor translate "$xBig,$yBig" circle 0,0 $fillRadius,0" "$f"
-			else
-				if [ "$debug" -eq 1 ]
-				then
-					echo -e "\t Match found (filtered): findX=$findX findY=$findY xBig=$xBig yBig=$yBig borderMatches=$leftBorderMatch,$topBorderMatch,$rightBorderMatch,$bottomBorderMatch"
-				fi
-			fi
-
-			if [ "$verbose" -eq 1 ] ; then
-				echo -n "."
-			fi
-		else
-			rm -f "$tmpDir/$fileNameSlice"
-			rm -f "$tmpDir/$fileNameSmall"
-			break
-		fi
-	done
+	#left	
+	if ! [ $leftBorderCm == "0" ] ; then
+		/usr/bin/convert -threshold 50% +repage -size "$(bc -l <<< "$xLeftBorderPx * $percentFactor")"x"$ySmall" -depth 1 -extract "$(bc -l <<< "$xLeftBorderPx * $percentFactor")"x"$ySmall+0+0" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSliceL"
+		xOffset="0"
+		yOffset="0"
+		fileName="$tmpDir/$fileNameSliceL"
+		removePunchHolesFromSlice
+		rm -f "$tmpDir/$fileNameSliceL"
+	fi
+	
+	#top
+	if ! [ $topBorderCm == "0" ] ; then
+		/usr/bin/convert -threshold 50% +repage -size "$xSmall"x"$(bc -l <<< "$yTopBorderPx * $percentFactor")" -depth 1 -extract "$xSmall"x"$(bc -l <<< "$yTopBorderPx * $percentFactor")+0+0" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSliceT"	
+		xOffset="0"
+		yOffset="0"
+		fileName="$tmpDir/$fileNameSliceT"
+		removePunchHolesFromSlice
+		rm -f "$tmpDir/$fileNameSliceT"
+	fi
+	
+	#right
+	if ! [ $rightBorderCm == "0" ] ; then
+		/usr/bin/convert -threshold 50% +repage -size "$(bc -l <<< "$xLeftBorderPx * $percentFactor")"x"$ySmall" -depth 1 -extract "$(bc -l <<< "$xLeftBorderPx * $percentFactor")"x"$ySmall+$(bc -l <<< "$xRightBorderPx * $percentFactor")+0" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSliceR"
+		xOffset="$xRightBorderPx"
+		yOffset="0"
+		fileName="$tmpDir/$fileNameSliceR"
+		removePunchHolesFromSlice
+		rm -f "$tmpDir/$fileNameSliceR"
+	fi
+	
+	#bottom
+	if ! [ $bottomBorderCm == "0" ] ; then
+		/usr/bin/convert -threshold 50% +repage -size "$xSmall"x"$(bc -l <<< "$yTopBorderPx * $percentFactor")" -depth 1 -extract "$xSmall"x"$(bc -l <<< "$yTopBorderPx * $percentFactor")+0+$(bc -l <<< "$yBottomBorderPx * $percentFactor")" "$tmpDir/$fileNameSmall" "$tmpDir/$fileNameSliceB"
+		xOffset="0"
+		yOffset="$yBottomBorderPx"
+		fileName="$tmpDir/$fileNameSliceB"
+		removePunchHolesFromSlice
+		rm -f "$tmpDir/$fileNameSliceB"
+	fi
+	
+	if [ -s "$mvgName" ] ; then
+		/usr/bin/mogrify -type Palette -draw "@$mvgName" "$f"
+	fi
+	
+	rm -f "$mvgName"
+	rm -f "$tmpDir/$fileNameSmall"
 done
 
 if [ "$inputFilePath" == "$outputFilePath" ]
